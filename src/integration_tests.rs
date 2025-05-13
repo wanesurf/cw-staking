@@ -8,8 +8,8 @@ mod tests {
     };
     use cosmwasm_std::testing::MockApi;
     use cosmwasm_std::{
-        coin, coins, Addr, BlockInfo, Coin, CosmosMsg, Decimal, Empty, StakingMsg, Uint128,
-        Validator,
+        coin, coins, Addr, BlockInfo, Coin, CosmosMsg, Decimal, Empty, Querier, StakingMsg,
+        Uint128, Validator,
     };
     use cw_multi_test::{App, AppBuilder, Contract, ContractWrapper, Executor, IntoAddr};
 
@@ -141,7 +141,7 @@ mod tests {
             // Initialize delegator with funds
             router
                 .bank
-                .init_balance(storage, &delegator, initial_balance)
+                .init_balance(storage, &delegator, initial_balance.clone())
                 .unwrap();
 
             // Setup staking module with validator
@@ -163,6 +163,11 @@ mod tests {
                 .unwrap();
         });
 
+        // Get the validator operator object
+
+        let validator_operator: Option<Validator> =
+            app.wrap().query_validator(validator.as_str()).unwrap();
+
         // Amount to delegate
         let delegation_amount = coin(100, "TOKEN");
 
@@ -176,13 +181,23 @@ mod tests {
         )
         .unwrap();
 
-        // Verify delegation was successful
+        // Verify the balance of the delegator
         let delegator_balance = app
             .wrap()
             .query_balance(delegator.as_str(), "TOKEN")
             .unwrap();
         assert_eq!(delegator_balance.amount.u128(), 900); // 1000 - 100 = 900
 
+        // Check the amount staked by the delegator to the validator
+        let validator_balance = app
+            .wrap()
+            .query_all_delegations(delegator.as_str())
+            .unwrap();
+        assert_eq!(validator_balance[0].amount, delegation_amount);
+
+        // Check the amount staked to the validator (aka the validator delegation)
+        // validator_address.unwrap();
+        // ????
         // Undelegate tokens
         app.execute(
             delegator.clone(),
@@ -221,6 +236,16 @@ mod tests {
             .unwrap();
         assert_eq!(delegator_balance.amount.u128(), 1000); // Should be back to initial balance
 
-        println!("delegator_balance: {:?}", delegator_balance);
+        //Add an other delegator so we're not out of bounds
+
+        // Check the amount staked by the delegator to the validator
+        let validator_balance = app
+            .wrap()
+            .query_all_delegations(delegator.as_str())
+            .unwrap();
+
+        // Assert that we get an error when trying to access the first delegation
+        // since the delegator has undelegated all their tokens
+        assert!(validator_balance.is_empty());
     }
 }
