@@ -7,7 +7,10 @@ mod tests {
         InstantiateMsg as CounterInitMsg, QueryMsg as CounterQueryMsg,
     };
     use cosmwasm_std::testing::MockApi;
-    use cosmwasm_std::{Addr, Coin, Empty, Uint128};
+    use cosmwasm_std::{
+        coin, coins, Addr, BlockInfo, Coin, CosmosMsg, Decimal, Empty, StakingMsg, Uint128,
+        Validator,
+    };
     use cw_multi_test::{App, AppBuilder, Contract, ContractWrapper, Executor, IntoAddr};
 
     pub fn contract_template() -> Box<dyn Contract<Empty>> {
@@ -120,5 +123,104 @@ mod tests {
 
         println!("count: {:?}", res.count);
         assert_eq!(1, res.count);
+    }
+
+    //Testing related to the staking contract
+
+    #[test]
+    fn test_delegation_undelegation_cycle() {
+        // Setup test accounts
+        let delegator = "delegator".into_addr();
+        let validator = "validator".into_addr();
+
+        // Initial balance for delegator
+        let initial_balance = coins(1000, "TOKEN");
+
+        // Create app with staking module enabled
+        let mut app = App::new(|router, api, storage| {
+            // Initialize delegator with funds
+            router
+                .bank
+                .init_balance(storage, &delegator, initial_balance)
+                .unwrap();
+
+            // Setup staking module with validator
+            let block = BlockInfo {
+                height: 1,
+                time: cosmwasm_std::Timestamp::from_seconds(1),
+                chain_id: "test".to_string(),
+            };
+            let validator = Validator::new(
+                validator.to_string(),
+                Decimal::percent(20),
+                Decimal::percent(20),
+                Decimal::percent(1),
+            );
+
+            router
+                .staking
+                .add_validator(api, storage, &block, validator)
+                .unwrap();
+        });
+
+        // Amount to delegate
+        let delegation_amount = coin(100, "TOKEN");
+
+        // Delegate tokens
+        app.execute(
+            delegator.clone(),
+            CosmosMsg::Staking(StakingMsg::Delegate {
+                validator: validator.to_string(),
+                amount: delegation_amount.clone(),
+            }),
+        )
+        .unwrap();
+
+        // Verify delegation was successful
+        let delegator_balance = app
+            .wrap()
+            .query_balance(delegator.as_str(), "TOKEN")
+            .unwrap();
+        assert_eq!(delegator_balance.amount.u128(), 900); // 1000 - 100 = 900
+
+        // Undelegate tokens
+        app.execute(
+            delegator.clone(),
+            CosmosMsg::<Empty>::Staking(StakingMsg::Undelegate {
+                validator: validator.to_string(),
+                amount: delegation_amount.clone(),
+            }),
+        )
+        .unwrap();
+
+        // Delegator balance should still be 900 as undelegation is in progress
+        let delegator_balance = app
+            .wrap()
+            .query_balance(delegator.as_str(), "TOKEN")
+            .unwrap();
+        assert_eq!(delegator_balance.amount.u128(), 900);
+
+        println!("delegator_balance: {:?}", delegator_balance);
+
+        // Advance block time to simulate undelegation period (typically 21 days in Cosmos)
+        app.update_block(|block| {
+            block.time = block.time.plus_days(21);
+            block.height += 21 * 100; // Assuming ~100 blocks per day
+        });
+
+        // After undelegation period, funds should be returned
+        // Note: In cw-multi-test, we need to trigger a block update or process pending operations
+        app.update_block(|block| {
+            block.height += 1;
+        });
+
+        // Verify funds are returned to delegator
+        let delegator_balance = app
+            .wrap()
+            .query_balance(delegator.as_str(), "TOKEN")
+            .unwrap();
+        assert_eq!(delegator_balance.amount.u128(), 1000); // Should be back to initial balance
+
+        println!("delegator_balance: {:?}", delegator_balance);
     }
 }
