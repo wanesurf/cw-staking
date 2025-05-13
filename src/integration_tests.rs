@@ -2,9 +2,13 @@
 mod tests {
     use crate::helpers::CwTemplateContract;
     use crate::msg::InstantiateMsg;
+    use crate::msg::{
+        ExecuteMsg as CounterExecMsg, GetCountResponse as CounterResponse,
+        InstantiateMsg as CounterInitMsg, QueryMsg as CounterQueryMsg,
+    };
     use cosmwasm_std::testing::MockApi;
     use cosmwasm_std::{Addr, Coin, Empty, Uint128};
-    use cw_multi_test::{App, AppBuilder, Contract, ContractWrapper, Executor};
+    use cw_multi_test::{App, AppBuilder, Contract, ContractWrapper, Executor, IntoAddr};
 
     pub fn contract_template() -> Box<dyn Contract<Empty>> {
         let contract = ContractWrapper::new(
@@ -74,5 +78,47 @@ mod tests {
             let cosmos_msg = cw_template_contract.call(msg).unwrap();
             app.execute(Addr::unchecked(USER), cosmos_msg).unwrap();
         }
+    }
+    fn counter_contract() -> Box<dyn Contract<Empty>> {
+        Box::new(ContractWrapper::new_with_empty(
+            crate::contract::execute,
+            crate::contract::instantiate,
+            crate::contract::query,
+        ))
+    }
+    #[test]
+    fn incrementing_should_work() {
+        let mut app = App::default();
+
+        let code_id = app.store_code(counter_contract());
+
+        let owner = "owner".into_addr();
+
+        let contract_addr = app
+            .instantiate_contract(
+                code_id,
+                owner.clone(),
+                &CounterInitMsg { count: 0 },
+                &[],
+                "counter-contract",
+                None,
+            )
+            .unwrap();
+
+        app.execute_contract(
+            owner,
+            contract_addr.clone(),
+            &CounterExecMsg::Increment {},
+            &[],
+        )
+        .unwrap();
+
+        let res: CounterResponse = app
+            .wrap()
+            .query_wasm_smart(contract_addr, &CounterQueryMsg::GetCount {})
+            .unwrap();
+
+        println!("count: {:?}", res.count);
+        assert_eq!(1, res.count);
     }
 }
